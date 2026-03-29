@@ -1,0 +1,8 @@
+[package]
+name = "stock-terminal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dotenv = "0.15.0"
+ureq = "3.3.0"
