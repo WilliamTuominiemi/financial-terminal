@@ -1,33 +1,19 @@
 use dotenv::dotenv;
+mod data;
+use color_eyre::Result;
+use crossterm::event;
+use data::send;
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Stylize};
+use ratatui::symbols::Marker;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Axis, Chart, Dataset, GraphType};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
 
-#[derive(Debug, Deserialize)]
-struct ApiResponse {
-    #[serde(rename = "Weekly Time Series")]
-    time_series: HashMap<String, WeeklyEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WeeklyEntry {
-    #[serde(rename = "1. open")]
-    open: String,
-    #[serde(rename = "2. high")]
-    high: String,
-    #[serde(rename = "3. low")]
-    low: String,
-    #[serde(rename = "4. close")]
-    close: String,
-}
-
-#[derive(Debug)]
-struct StockSummary {
-    date: String,
-    average: f64,
-}
-
-fn main() {
+fn main() -> Result<()> {
     dotenv().ok();
     let api_key = env::var("API_KEY").expect("API_KEY not set");
 
@@ -36,32 +22,70 @@ fn main() {
         "https://www.alphavantage.co/query?function=TIME_SERIES_WEEKLY&symbol={symbol}&apikey={api_key}"
     );
 
-    match send(&url) {
+    let mut dataset = match send(&url) {
         Ok(mut summaries) => {
             summaries.sort_by(|a, b| a.date.cmp(&b.date));
-            for s in &summaries {
-                println!("{}: avg={:.2}", s.date, s.average);
+            summaries
+        }
+        Err(e) => {
+            eprintln!("Request failed: {}", e);
+            Vec::new()
+        }
+    };
+
+    color_eyre::install()?;
+    ratatui::run(|terminal| {
+        loop {
+            terminal.draw(render)?;
+            if let event::Event::Key(_) = event::read()? {
+                break Ok(());
             }
         }
-        Err(e) => eprintln!("Request failed: {}", e),
-    }
+    })
 }
 
-fn send(url: &str) -> Result<Vec<StockSummary>, Box<dyn std::error::Error>> {
-    let response: ApiResponse = ureq::get(url).call()?.body_mut().read_json()?;
+fn render(frame: &mut Frame) {
+    let layout = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).spacing(1);
+    let [top, main] = frame.area().layout(&layout);
 
-    let summaries = response
-        .time_series
-        .into_iter()
-        .map(|(date, entry)| {
-            let open: f64 = entry.open.parse().unwrap_or(0.0);
-            let high: f64 = entry.high.parse().unwrap_or(0.0);
-            let low: f64 = entry.low.parse().unwrap_or(0.0);
-            let close: f64 = entry.close.parse().unwrap_or(0.0);
-            let average = (open + high + low + close) / 4.0;
-            StockSummary { date, average }
-        })
-        .collect();
+    let title = Line::from_iter([
+        Span::from("Chart Widget").bold(),
+        Span::from(" (Press 'q' to quit)"),
+    ]);
+    frame.render_widget(title.centered(), top);
 
-    Ok(summaries)
+    render_chart(frame, main);
+}
+
+pub fn render_chart(frame: &mut Frame, area: Rect) {
+    let dataset = Dataset::default()
+        .name("Stonks")
+        .marker(Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(Color::Blue)
+        .data(&[
+            (0.0, 1.0),
+            (1.0, 3.0),
+            (2.0, 0.5),
+            (3.0, 2.0),
+            (4.0, 0.8),
+            (5.0, 4.0),
+            (6.0, 1.0),
+            (7.0, 6.0),
+            (8.0, 3.0),
+            (10.0, 10.0),
+        ]);
+
+    let x_axis = Axis::default()
+        .title("Hustle".blue())
+        .bounds([0.0, 10.0])
+        .labels(["0%", "50%", "100%"]);
+
+    let y_axis = Axis::default()
+        .title("Profit".blue())
+        .bounds([0.0, 10.0])
+        .labels(["0", "5", "10"]);
+
+    let chart = Chart::new(vec![dataset]).x_axis(x_axis).y_axis(y_axis);
+    frame.render_widget(chart, area);
 }
